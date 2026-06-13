@@ -1,0 +1,34 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Generated notebook outputs
+notebooks/*.png
+notebooks/*.pdf
+
+# Model checkpoints and training artifacts (can be large)
+*.pt
+*.pth
+checkpoints/
+
+# Data files (download separately, don't commit)
+data/
+
+# Environment variables / secrets
+.env
