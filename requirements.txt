@@ -4,3 +4,7 @@ torch
 matplotlib
 pandas
 tqdm
+yfinance
+plotly
+streamlit
+streamlit-autorefresh
