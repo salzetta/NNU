@@ -18,7 +18,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
+import torch
 from src.data.fetcher import get_market_snapshot
+from src.training.networks import build_spx_network, build_vix_network
+from src.calibration.calibrate import calibrate
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -189,22 +192,149 @@ with st.expander("Raw options data"):
             })
             st.dataframe(df, use_container_width=True)
 
-# ── Calibration placeholder ───────────────────────────────────────────────────
+# ── Calibration ───────────────────────────────────────────────────────────────
 
 st.divider()
 st.subheader("Model Calibration")
 
-st.info(
-    "**Coming in Phase 4.** Once the neural networks are trained on a full "
-    "dataset, clicking 'Run Calibration' will find the model parameters "
-    "(β₀, β₁, β₂, β₁₂, λ₁,₀, λ₁,₁, θ₁, λ₂,₀, λ₂,₁, θ₂) that best fit "
-    "the current SPX smile and VIX data shown above. Pricing will reduce to "
-    "a matrix-vector product — fast enough to re-run in real time.",
-    icon="ℹ️",
-)
+# Network file uploaders
+with st.expander("Load trained networks", expanded=True):
+    st.caption(
+        "Upload the .pt checkpoint files saved after Phase 3 training. "
+        "Without these the button stays disabled."
+    )
+    col_u1, col_u2 = st.columns(2)
+    spx_file = col_u1.file_uploader("SPX network (.pt)", type="pt")
+    vix_file  = col_u2.file_uploader("VIX network (.pt)", type="pt")
 
-col_a, col_b = st.columns(2)
-with col_a:
-    st.button("Run Calibration", disabled=True, help="Requires trained networks (Phase 4)")
-with col_b:
-    st.button("Export calibrated params", disabled=True)
+
+@st.cache_resource
+def load_networks(spx_bytes, vix_bytes):
+    spx_net = build_spx_network()
+    vix_net = build_vix_network()
+    spx_net.load_state_dict(torch.load(spx_bytes,  map_location='cpu'))
+    vix_net.load_state_dict(torch.load(vix_bytes,  map_location='cpu'))
+    spx_net.eval()
+    vix_net.eval()
+    return spx_net, vix_net
+
+
+networks_ready = spx_file is not None and vix_file is not None
+
+col_a, col_b, col_c = st.columns([2, 2, 3])
+n_steps = col_b.slider("Gradient steps", 50, 500, 200, disabled=not networks_ready)
+run_btn = col_a.button("Run Calibration", disabled=not networks_ready)
+
+if run_btn and networks_ready and fetch_ok:
+    spx_net, vix_net = load_networks(spx_file, vix_file)
+
+    progress_bar = st.progress(0)
+    loss_display = st.empty()
+    loss_log     = []
+
+    def _cb(step, loss_val):
+        loss_log.append(loss_val)
+        progress_bar.progress(step / n_steps)
+        loss_display.caption(f"Step {step}/{n_steps} — loss {loss_val:.5f}")
+
+    with st.spinner("Calibrating..."):
+        cal_params, loss_hist = calibrate(
+            spx_net, vix_net, snap,
+            n_steps=n_steps, verbose=False,
+            progress_callback=_cb,
+        )
+
+    st.success("Calibration complete.")
+    st.session_state['cal_params']  = cal_params
+    st.session_state['loss_history'] = loss_hist
+
+# Display results if calibration has been run this session
+if 'cal_params' in st.session_state:
+    import pandas as pd
+    p = st.session_state['cal_params']
+
+    st.markdown("**Calibrated parameters**")
+    param_df = pd.DataFrame({
+        "Parameter": ["β₀", "β₁", "β₂", "β₁₂",
+                      "λ₁,₀", "λ₁,₁", "θ₁",
+                      "λ₂,₀", "λ₂,₁", "θ₂"],
+        "Value": [p.beta0, p.beta1, p.beta2, p.beta12,
+                  p.lam1_0, p.lam1_1, p.theta1,
+                  p.lam2_0, p.lam2_1, p.theta2],
+        "Meaning": [
+            "Baseline volatility",
+            "Trend coefficient (leverage)",
+            "Variability coefficient",
+            "Parabolic (right-tail) term",
+            "R₁ fast decay rate",
+            "R₁ slow decay rate",
+            "R₁ mixing weight",
+            "R₂ fast decay rate",
+            "R₂ slow decay rate",
+            "R₂ mixing weight",
+        ],
+    })
+    param_df["Value"] = param_df["Value"].round(4)
+    st.dataframe(param_df, use_container_width=True, hide_index=True)
+
+    # Loss curve
+    loss_fig = go.Figure()
+    loss_fig.add_trace(go.Scatter(
+        y=st.session_state['loss_history'],
+        mode='lines', line=dict(color='steelblue', width=2),
+        name='Joint loss',
+    ))
+    loss_fig.update_layout(
+        xaxis_title="Gradient step",
+        yaxis_title="Loss",
+        height=250,
+        margin=dict(t=10, b=40),
+    )
+    st.plotly_chart(loss_fig, use_container_width=True)
+
+    # Model smile overlay on SPX chart
+    if fetch_ok and snap['spx_smiles'] and 'spx_net' in dir():
+        st.markdown("**Model vs. market (SPX smile)**")
+        fig_overlay = go.Figure()
+        colours = ["royalblue", "tomato"]
+        spot = snap['levels']['spx']
+
+        for i, smile in enumerate(snap['spx_smiles'][:2]):
+            col = colours[i % 2]
+            moneyness = smile['strikes'] / spot
+            # Market
+            fig_overlay.add_trace(go.Scatter(
+                x=moneyness, y=smile['ivs'],
+                mode='markers', name=f"Market {smile['expiry']}",
+                marker=dict(color=col, size=6, symbol='circle-open'),
+            ))
+            # Model
+            import torch as _torch
+            from src.calibration.calibrate import _build_inputs, raw_to_params_tensor
+            T_v  = _torch.full((len(smile['strikes']),), smile['T'], dtype=_torch.float32)
+            K_v  = _torch.tensor(smile['strikes'] / spot, dtype=_torch.float32)
+            from src.calibration.calibrate import params_to_raw
+            raw_p = params_to_raw(p)
+            from src.calibration.calibrate import raw_to_params_tensor, compute_R_factors
+            theta_M = raw_to_params_tensor(raw_p)
+            with _torch.no_grad():
+                inputs = _build_inputs(
+                    _torch.cat([theta_M,
+                                _torch.tensor([p.R1_0_0, p.R1_1_0,
+                                               p.R2_0_0, p.R2_1_0])]),
+                    T_v, K_v)
+                iv_mdl = spx_net(inputs).squeeze(1).numpy()
+            fig_overlay.add_trace(go.Scatter(
+                x=moneyness, y=iv_mdl,
+                mode='lines', name=f"Model {smile['expiry']}",
+                line=dict(color=col, width=2),
+            ))
+
+        fig_overlay.update_layout(
+            xaxis_title="Moneyness K / S₀",
+            yaxis_title="Implied Volatility",
+            yaxis_tickformat=".0%",
+            height=380,
+            margin=dict(t=10, b=40),
+        )
+        st.plotly_chart(fig_overlay, use_container_width=True)
