@@ -292,6 +292,60 @@ if 'cal_params' in st.session_state:
     )
     st.plotly_chart(loss_fig, use_container_width=True)
 
+    # VIX term structure — every trading day for 6 months
+    st.markdown("**Model-implied VIX term structure (6-month daily horizon)**")
+    import torch as _torch
+    from src.calibration.calibrate import params_to_raw, raw_to_params_tensor, _build_inputs
+
+    _, vix_net_ts = load_networks(spx_file, vix_file)
+    raw_p = params_to_raw(p)
+    with _torch.no_grad():
+        theta_M = raw_to_params_tensor(raw_p)
+        theta14 = _torch.cat([theta_M,
+                               _torch.tensor([p.R1_0_0, p.R1_1_0,
+                                              p.R2_0_0, p.R2_1_0])])
+        # 126 trading days = ~6 calendar months
+        N = 126
+        T_grid = _torch.linspace(1 / 252, 126 / 252, N)
+        m_grid = _torch.ones(N)   # ATM moneyness → futures price
+        inputs_ts = _build_inputs(theta14, T_grid, m_grid)
+        futures_mdl = vix_net_ts(inputs_ts)[:, 0].numpy()
+
+    cal_days = np.round(T_grid.numpy() * 365).astype(int)
+    vix_now  = snap['levels']['vix']
+
+    fig_ts = go.Figure()
+    fig_ts.add_trace(go.Scatter(
+        x=cal_days, y=futures_mdl,
+        mode='lines', name='Model fair value',
+        line=dict(color='steelblue', width=2),
+    ))
+    for fut in snap.get('vix_futures', []):
+        fig_ts.add_trace(go.Scatter(
+            x=[round(fut['T'] * 365)], y=[fut['futures_price']],
+            mode='markers', name=f"Market proxy ({fut['expiry']})",
+            marker=dict(color='tomato', size=10, symbol='circle'),
+        ))
+    fig_ts.add_hline(
+        y=vix_now, line_dash='dash', line_color='gray', opacity=0.5,
+        annotation_text=f"VIX spot {vix_now:.1f}",
+        annotation_position="bottom right",
+    )
+    fig_ts.update_layout(
+        xaxis_title="Calendar days from today",
+        yaxis_title="VIX futures fair value",
+        height=360,
+        margin=dict(t=10, b=40),
+        hovermode='x unified',
+    )
+    st.plotly_chart(fig_ts, use_container_width=True)
+    st.caption(
+        "Smooth curve = model fair value for a VIX futures contract expiring on that day. "
+        "Red dot = current market proxy price. "
+        "Dashed line = VIX spot. "
+        "An upward-sloping curve (contango) is normal; a downward slope (backwardation) signals stress."
+    )
+
     # Model smile overlay on SPX chart
     if fetch_ok and snap['spx_smiles'] and 'spx_net' in dir():
         st.markdown("**Model vs. market (SPX smile)**")
