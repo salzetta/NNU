@@ -326,10 +326,12 @@ if 'cal_params' in st.session_state:
             mode='markers', name=f"Market proxy ({fut['expiry']})",
             marker=dict(color='tomato', size=10, symbol='circle'),
         ))
-    fig_ts.add_hline(
-        y=vix_now, line_dash='dash', line_color='gray', opacity=0.5,
-        annotation_text=f"VIX spot {vix_now:.1f}",
-        annotation_position="bottom right",
+    fig_ts.add_hline(y=vix_now, line_dash='dash', line_color='gray', opacity=0.5)
+    fig_ts.add_annotation(
+        x=cal_days[-1], y=vix_now,
+        text=f"VIX spot {vix_now:.1f}",
+        showarrow=False, xanchor='right', yanchor='bottom',
+        font=dict(color='gray'),
     )
     fig_ts.update_layout(
         xaxis_title="Calendar days from today",

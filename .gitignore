@@ -28,7 +28,7 @@ notebooks/*.pdf
 checkpoints/
 
 # Data files (download separately, don't commit)
-data/
+/data/
 
 # Environment variables / secrets
 .env

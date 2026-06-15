@@ -123,36 +123,43 @@ def get_spx_smile(
 
 def get_vix_futures_proxy() -> list[dict]:
     """
-    Return VIX spot as a proxy for the front-month VIX futures price.
+    Return multiple points on the VIX term structure using the four CBOE
+    VIX indices available free on Yahoo Finance:
 
-    Limitation: the true futures price includes a basis (futures trade at a
-    premium to spot during normal conditions — contango). For calibration,
-    a paid feed (Polygon.io, CBOE DataShop) would give the actual futures
-    price per expiry. Here we use the VIX spot as a best free approximation.
+        ^VIX9D  —  9-day expected volatility   (~9 calendar days)
+        ^VIX    — 30-day expected volatility   (~30 calendar days)
+        ^VIX3M  —  3-month expected volatility (~91 calendar days)
+        ^VIX6M  —  6-month expected volatility (~182 calendar days)
 
-    Returns a list of one entry matching the structure expected by calibration.
+    These are not VIX futures prices (which require a paid feed) but are
+    close proxies — they measure implied vol of SPX options at fixed horizons
+    and track the futures term structure well in normal markets.
     """
-    vix = yf.Ticker("^VIX")
-    spot = float(vix.history(period="1d")["Close"].iloc[-1])
-    today = pd.Timestamp.now(tz="America/New_York").normalize()
+    _TERM_TICKERS = [
+        ("^VIX9D",  9),
+        ("^VIX",   30),
+        ("^VIX3M", 91),
+        ("^VIX6M", 182),
+    ]
 
-    # VIX futures expire on the Wednesday 30 days before the next SPX expiry.
-    # Approximate: use the nearest monthly Wednesday ~28 days out.
-    import pandas.tseries.offsets as offsets
-    approx_expiry = today + pd.Timedelta(days=28)
+    results = []
+    for ticker, days in _TERM_TICKERS:
+        try:
+            data = yf.Ticker(ticker).history(period="1d")["Close"].dropna()
+            if data.empty:
+                continue
+            level = float(data.iloc[-1])
+            T = days / 365.0
+            results.append({
+                "expiry":        f"{days}d",
+                "T":             T,
+                "futures_price": level,
+                "is_proxy":      True,
+            })
+        except Exception:
+            continue
 
-    # Snap to nearest Wednesday
-    days_to_wed = (2 - approx_expiry.weekday()) % 7
-    approx_expiry = approx_expiry + pd.Timedelta(days=days_to_wed)
-
-    T = (approx_expiry - today).days / 365.0
-
-    return [{
-        "expiry":       approx_expiry.strftime("%Y-%m-%d"),
-        "T":            T,
-        "futures_price": spot,     # VIX spot used as futures proxy
-        "is_proxy":     True,      # flag so dashboard can warn user
-    }]
+    return results
 
 
 # ── VIX options ───────────────────────────────────────────────────────────────
