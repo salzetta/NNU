@@ -83,7 +83,7 @@ def get_spx_smile(
 
     results = []
     for exp_str in all_expiries[:n_expiries]:
-        exp_date = pd.Timestamp(exp_str)
+        exp_date = pd.Timestamp(exp_str, tz="America/New_York")
         T = (exp_date - today).days / 365.0
         if T <= 0:
             continue
@@ -178,7 +178,7 @@ def get_vix_smile(
 
     results = []
     for exp_str in all_expiries[:n_expiries]:
-        exp_date = pd.Timestamp(exp_str)
+        exp_date = pd.Timestamp(exp_str, tz="America/New_York")
         T = (exp_date - today).days / 365.0
         if T <= 0:
             continue
