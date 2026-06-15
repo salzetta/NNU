@@ -144,6 +144,20 @@ def train(
     return {'train_loss': train_history, 'val_loss': val_history}
 
 
+def save_model(model: PDVNetwork, path: str) -> None:
+    """Save model weights to a .pt file."""
+    torch.save(model.state_dict(), path)
+    print(f"Saved model to {path}")
+
+
+def load_model(model: PDVNetwork, path: str,
+               device: str = 'cpu') -> PDVNetwork:
+    """Load model weights from a .pt file."""
+    model.load_state_dict(torch.load(path, map_location=device, weights_only=True))
+    model.eval()
+    return model
+
+
 def evaluate(
     model: PDVNetwork,
     inputs: np.ndarray,

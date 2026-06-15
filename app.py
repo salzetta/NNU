@@ -212,8 +212,8 @@ with st.expander("Load trained networks", expanded=True):
 def load_networks(spx_bytes, vix_bytes):
     spx_net = build_spx_network()
     vix_net = build_vix_network()
-    spx_net.load_state_dict(torch.load(spx_bytes,  map_location='cpu'))
-    vix_net.load_state_dict(torch.load(vix_bytes,  map_location='cpu'))
+    spx_net.load_state_dict(torch.load(spx_bytes, map_location='cpu', weights_only=True))
+    vix_net.load_state_dict(torch.load(vix_bytes, map_location='cpu', weights_only=True))
     spx_net.eval()
     vix_net.eval()
     return spx_net, vix_net
